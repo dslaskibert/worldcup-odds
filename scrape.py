@@ -60,21 +60,35 @@ def fetch_page_text() -> str:
             ),
         )
         page = ctx.new_page()
-        page.goto(URL, wait_until="networkidle", timeout=60_000)
 
-        # On attend qu'au moins un nom de pays favori apparaisse dans le DOM,
-        # signe que les cotes ont été rendues.
+        # Bloque les ressources lourdes/inutiles : player Twitch live (qui
+        # fait que networkidle ne se déclenche jamais), tracking, pubs.
+        BLOCK = ("twitch.tv", "ttvnw.net", "sentry.io", "doubleclick.net",
+                 "googletagmanager.com", "google-analytics.com")
+        page.route(
+            "**/*",
+            lambda route: route.abort()
+            if any(d in route.request.url for d in BLOCK)
+            else route.continue_(),
+        )
+
+        page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
+
+        # Attend que des cotes apparaissent vraiment dans le DOM.
         try:
             page.wait_for_function(
-                "() => /Espagne|France|Brésil/.test(document.body.innerText)",
+                "() => /Espagne|France|Brésil/.test(document.body.innerText) "
+                "&& /\\d+[.,]\\d{2}/.test(document.body.innerText)",
                 timeout=30_000,
             )
-        except Exception:
-            pass  # On tente quand même l'extraction ci-dessous.
+        except Exception as e:
+            print(f"⚠️  Timeout d'attente du contenu : {e}")
+
+        # Petit délai supplémentaire pour les rendus JS tardifs.
+        page.wait_for_timeout(2000)
 
         text = page.evaluate("() => document.body.innerText")
 
-        # Pour debug si l'extraction foire ensuite.
         DEBUG_DIR.mkdir(exist_ok=True)
         (DEBUG_DIR / "page.txt").write_text(text, encoding="utf-8")
         page.screenshot(path=str(DEBUG_DIR / "page.png"), full_page=True)
