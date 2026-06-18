@@ -1,15 +1,17 @@
 """
 Scrape les cotes "Vainqueur Coupe du Monde 2026" sur Winamax.
 
-Étapes :
+Navigation :
 1. Playwright charge la SPA (Twitch et tracking bloqués).
 2. Clique sur l'onglet "Compétition" puis le sous-onglet "Vainqueur (N)".
-3. Attend que la liste des cotes outright soit rendue.
-4. Extrait le texte, isole la section "Vainqueur" et cherche chaque pays.
-5. Met à jour data/odds.csv en ajoutant (ou écrasant) la colonne du jour.
+3. Clique sur "Plus de sélections" pour déplier la liste outright complète
+   (Winamax n'affiche que les 2 favoris par défaut).
+4. Isole la section "Vainqueur" (heading, pas le sous-onglet) et extrait
+   chaque cote au format X,YY.
 
-Si <90% des pays sont trouvés, on échoue bruyamment (artefacts debug
-sauvegardés). Évite d'écraser le CSV avec des données partielles.
+Seuil : au moins MIN_COUNTRIES pays trouvés. Winamax ne propose pas toujours
+de cote outright pour les 48 pays (certains sont jugés sans chance ou en
+cours d'élimination) — les cellules manquantes restent vides dans le CSV.
 """
 import csv
 import re
@@ -25,6 +27,9 @@ CSV_PATH = Path("data/odds.csv")
 DEBUG_DIR = Path("debug")
 PARIS = ZoneInfo("Europe/Paris")
 
+# Si on trouve moins que ça, c'est qu'on s'est planté de section.
+MIN_COUNTRIES = 20
+
 ALIASES = {
     "République de Corée": ["République de Corée", "Corée du Sud", "Corée"],
     "République d'Iran": ["République d'Iran", "Iran"],
@@ -36,6 +41,7 @@ ALIASES = {
     "Afrique du Sud": ["Afrique du Sud"],
     "Arabie Saoudite": ["Arabie Saoudite", "Arabie saoudite"],
     "Nouvelle-Zélande": ["Nouvelle-Zélande", "Nouvelle Zélande"],
+    "Tchéquie": ["Tchéquie", "République Tchèque"],
 }
 
 
@@ -45,7 +51,6 @@ def load_countries() -> list[str]:
 
 
 def fetch_page_text() -> str:
-    """Charge la page, navigue jusqu'à l'onglet Vainqueur, renvoie le texte."""
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         ctx = browser.new_context(
@@ -67,15 +72,14 @@ def fetch_page_text() -> str:
         )
 
         page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
-        page.wait_for_timeout(3000)  # laisse le shell se construire
+        page.wait_for_timeout(3000)
 
         # 1. Onglet "Compétition"
         try:
             page.get_by_text("Compétition", exact=True).first.click(timeout=10_000)
             print("✅ Onglet 'Compétition' cliqué")
         except Exception as e:
-            print(f"⚠️  Impossible de cliquer 'Compétition' : {e}")
-
+            print(f"⚠️  Compétition : {e}")
         page.wait_for_timeout(1500)
 
         # 2. Sous-onglet "Vainqueur (N)"
@@ -85,59 +89,86 @@ def fetch_page_text() -> str:
             ).first.click(timeout=10_000)
             print("✅ Sous-onglet 'Vainqueur' cliqué")
         except Exception as e:
-            print(f"⚠️  Impossible de cliquer 'Vainqueur' : {e}")
+            print(f"⚠️  Vainqueur : {e}")
+        page.wait_for_timeout(2000)
 
-        # 3. Attend que la liste outright soit peuplée :
-        #    >= 20 cotes au format X,YY dans le texte de la page.
-        try:
-            page.wait_for_function(
-                "() => (document.body.innerText.match(/\\d+,\\d{2}/g) || []).length >= 20",
-                timeout=20_000,
+        # 3. Click "Plus de sélections" pour déplier la liste outright.
+        # Le premier dans le DOM est celui du marché "Vainqueur" (premier
+        # marché affiché).
+        def count_odds() -> int:
+            return page.evaluate(
+                "() => (document.body.innerText.match(/\\d+,\\d{2}/g) || []).length"
             )
-            print("✅ Liste des cotes chargée")
-        except Exception as e:
-            print(f"⚠️  Timeout d'attente des cotes : {e}")
 
-        page.wait_for_timeout(1500)  # rendu final
+        before = count_odds()
+        try:
+            page.get_by_text("Plus de sélections").first.click(timeout=10_000)
+            print("✅ 'Plus de sélections' cliqué")
+            # Attend que le nombre de cotes augmente significativement.
+            for _ in range(20):
+                page.wait_for_timeout(500)
+                if count_odds() > before + 5:
+                    break
+            print(f"   Cotes visibles : {before} → {count_odds()}")
+        except Exception as e:
+            print(f"⚠️  'Plus de sélections' : {e}")
+
+        page.wait_for_timeout(1500)
 
         text = page.evaluate("() => document.body.innerText")
-
         DEBUG_DIR.mkdir(exist_ok=True)
         (DEBUG_DIR / "page.txt").write_text(text, encoding="utf-8")
         page.screenshot(path=str(DEBUG_DIR / "page.png"), full_page=True)
-
         browser.close()
         return text
 
 
 def scope_to_outright(text: str) -> str:
     """
-    Restreint au bloc qui suit le sous-onglet 'Vainqueur (N)'.
-    Coupe avant les sous-onglets suivants (Buteurs, Top X, Stats).
+    Isole le bloc de la section "Vainqueur" (heading, pas le sous-onglet).
+
+    Sur Winamax, "Vainqueur" apparaît plusieurs fois :
+    - sous-onglet : "Vainqueur\\n(28)"
+    - heading de section : "Vainqueur\\nFrance\\n34%\\n4,75\\n..."
+    - autres marchés : "Double chance Vainqueur", "Groupe A - Vainqueur" etc.
+
+    On veut le HEADING de la section principale : c'est l'occurrence isolée
+    (pas précédée de "Groupe X -" ni "Double chance", pas suivie de "(").
     """
-    m = re.search(r"Vainqueur\s*\(\d+\)", text)
-    if not m:
-        return text
-    rest = text[m.start():]
-    end = re.search(
-        r"\n\s*(Buteurs\s*\(\d+\)|Top\s*X\s*\(\d+\)|Stats\s+joueurs|Stats\s+équipes)",
-        rest,
-    )
-    return rest[: end.start()] if end else rest
+    for m in re.finditer(r"\bVainqueur\b", text):
+        before = text[max(0, m.start() - 25):m.start()]
+        after = text[m.end():m.end() + 5]
+        if after.lstrip().startswith("("):
+            continue  # sous-onglet
+        if re.search(r"Groupe\s+[A-L]\s*-\s*$", before):
+            continue  # marché "Groupe X - Vainqueur"
+        if "Double chance" in before:
+            continue  # marché "Double chance Vainqueur"
+        # Bingo : c'est le heading de la section principale.
+        rest = text[m.start():]
+        end = re.search(
+            r"\n\s*(Double chance Vainqueur"
+            r"|Groupe\s+[A-L]\s*-\s*(Vainqueur|Qualification)"
+            r"|Buteurs\s*\(\d+\)"
+            r"|Top\s*X\s*\(\d+\))",
+            rest,
+        )
+        return rest[: end.start()] if end else rest
+    return text
 
 
 def extract_odd(text: str, country: str) -> float | None:
     """
-    Cherche la cote outright pour `country`. Les cotes Winamax outright sont
-    TOUJOURS affichées avec exactement 2 décimales (ex : 4,75 — 120,00 —
-    5000,00). On exige ce format pour exclure les pourcentages (34%) et les
-    IDs internes (5630, 2287, etc.) qui apparaissent comme entiers nus.
+    Cherche la cote outright. Format attendu sur la page Winamax :
+        Pays
+        XX%
+        Y,YY
+    Donc on cherche le nom de pays suivi (dans 200 chars) d'un nombre
+    avec exactement 2 décimales. Exclut les pourcentages (entiers nus).
     """
     names = ALIASES.get(country, [country])
     odds_re = r"(\d{1,5}[.,]\d{2})"
     for name in names:
-        # Entre le nom du pays et sa cote outright : drapeau, %, barre.
-        # Fenêtre de 200 caractères pour rester local.
         pattern = re.compile(
             r"\b" + re.escape(name) + r"\b[\s\S]{0,200}?" + odds_re,
             re.IGNORECASE,
@@ -151,7 +182,6 @@ def extract_odd(text: str, country: str) -> float | None:
 
 
 def update_csv(odds: dict[str, float], today: str) -> tuple[int, int]:
-    """Ajoute (ou écrase) la colonne `today` dans le CSV."""
     with CSV_PATH.open(encoding="utf-8") as f:
         rows = list(csv.reader(f))
     header, *body = rows
@@ -164,9 +194,8 @@ def update_csv(odds: dict[str, float], today: str) -> tuple[int, int]:
         for r in body:
             r.append("")
 
-    # Reset la colonne du jour avant de réécrire, pour qu'un rerun parte propre.
     for r in body:
-        r[col] = ""
+        r[col] = ""  # reset
 
     filled = 0
     for r in body:
@@ -191,12 +220,11 @@ def main() -> int:
         f"📄 {len(text)} chars total → "
         f"{len(outright)} chars dans la section Vainqueur"
     )
-
     DEBUG_DIR.mkdir(exist_ok=True)
     (DEBUG_DIR / "outright.txt").write_text(outright, encoding="utf-8")
 
-    odds = {}
-    missing = []
+    odds: dict[str, float] = {}
+    missing: list[str] = []
     for c in countries:
         v = extract_odd(outright, c)
         if v is None:
@@ -204,13 +232,14 @@ def main() -> int:
         else:
             odds[c] = v
 
-    coverage = len(odds) / len(countries)
-    print(f"✅ {len(odds)}/{len(countries)} pays trouvés ({coverage:.0%})")
+    print(f"✅ {len(odds)}/{len(countries)} pays trouvés")
     if missing:
-        print(f"⚠️  Manquants : {', '.join(missing)}")
+        print(f"ℹ️  Sans cote sur Winamax aujourd'hui ({len(missing)}) : "
+              f"{', '.join(missing)}")
 
-    if coverage < 0.9:
-        print("❌ Couverture < 90 %, abandon (CSV non modifié).")
+    if len(odds) < MIN_COUNTRIES:
+        print(f"❌ Moins de {MIN_COUNTRIES} pays trouvés, abandon "
+              "(probable bug d'extraction, CSV non modifié).")
         print(f"   Artefacts debug dans {DEBUG_DIR}/")
         return 1
 
@@ -222,4 +251,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-    
