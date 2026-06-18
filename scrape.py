@@ -190,14 +190,20 @@ def update_csv(odds: dict[str, float], today: str) -> tuple[int, int]:
         rows = list(csv.reader(f))
     header, *body = rows
 
-    if today in header:
-        col = header.index(today)
-    else:
+    if today not in header:
         header.append(today)
-        col = len(header) - 1
-        for r in body:
+
+    # Normalise toutes les lignes à la longueur du header. Robuste contre
+    # un CSV dont certaines lignes ont moins de cellules (héritage de
+    # nettoyage manuel ou de runs précédents).
+    n = len(header)
+    for r in body:
+        while len(r) < n:
             r.append("")
 
+    col = header.index(today)
+
+    # Reset de la colonne du jour avant écriture.
     for r in body:
         r[col] = ""
 
