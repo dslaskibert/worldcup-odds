@@ -1,15 +1,15 @@
 """
 Scrape les cotes "Vainqueur Coupe du Monde 2026" sur Winamax.
 
-Stratégie :
-- Playwright headless charge la SPA Winamax (les cotes sont rendues en JS).
-- On extrait tout le texte de la page.
-- Pour chaque pays connu, on cherche la première occurrence suivie d'un nombre
-  décimal (la cote). Insensible aux changements de classes CSS.
-- On met à jour data/odds.csv en ajoutant une colonne pour aujourd'hui.
+Étapes :
+1. Playwright charge la SPA (Twitch et tracking bloqués).
+2. Clique sur l'onglet "Compétition" puis le sous-onglet "Vainqueur (N)".
+3. Attend que la liste des cotes outright soit rendue.
+4. Extrait le texte, isole la section "Vainqueur" et cherche chaque pays.
+5. Met à jour data/odds.csv en ajoutant (ou écrasant) la colonne du jour.
 
-Si <90% des pays sont trouvés, on échoue bruyamment (artifact debug
-sauvegardé). Évite d'écraser le CSV avec des données partielles.
+Si <90% des pays sont trouvés, on échoue bruyamment (artefacts debug
+sauvegardés). Évite d'écraser le CSV avec des données partielles.
 """
 import csv
 import re
@@ -25,9 +25,6 @@ CSV_PATH = Path("data/odds.csv")
 DEBUG_DIR = Path("debug")
 PARIS = ZoneInfo("Europe/Paris")
 
-# Certains noms apparaissent ailleurs sur la page (matchs en cours, etc.).
-# Pour rester robustes, on liste des alias possibles. Le premier qui matche
-# avec une cote plausible (>= 1.01) gagne.
 ALIASES = {
     "République de Corée": ["République de Corée", "Corée du Sud", "Corée"],
     "République d'Iran": ["République d'Iran", "Iran"],
@@ -43,13 +40,12 @@ ALIASES = {
 
 
 def load_countries() -> list[str]:
-    """Lit la liste des pays depuis le CSV existant (ordre conservé)."""
     with CSV_PATH.open(encoding="utf-8") as f:
         return [row["country"] for row in csv.DictReader(f)]
 
 
 def fetch_page_text() -> str:
-    """Charge la page Winamax et renvoie tout le texte rendu."""
+    """Charge la page, navigue jusqu'à l'onglet Vainqueur, renvoie le texte."""
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         ctx = browser.new_context(
@@ -61,8 +57,6 @@ def fetch_page_text() -> str:
         )
         page = ctx.new_page()
 
-        # Bloque les ressources lourdes/inutiles : player Twitch live (qui
-        # fait que networkidle ne se déclenche jamais), tracking, pubs.
         BLOCK = ("twitch.tv", "ttvnw.net", "sentry.io", "doubleclick.net",
                  "googletagmanager.com", "google-analytics.com")
         page.route(
@@ -73,19 +67,38 @@ def fetch_page_text() -> str:
         )
 
         page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
+        page.wait_for_timeout(3000)  # laisse le shell se construire
 
-        # Attend que des cotes apparaissent vraiment dans le DOM.
+        # 1. Onglet "Compétition"
+        try:
+            page.get_by_text("Compétition", exact=True).first.click(timeout=10_000)
+            print("✅ Onglet 'Compétition' cliqué")
+        except Exception as e:
+            print(f"⚠️  Impossible de cliquer 'Compétition' : {e}")
+
+        page.wait_for_timeout(1500)
+
+        # 2. Sous-onglet "Vainqueur (N)"
+        try:
+            page.get_by_text(
+                re.compile(r"^Vainqueur\s*\(\d+\)")
+            ).first.click(timeout=10_000)
+            print("✅ Sous-onglet 'Vainqueur' cliqué")
+        except Exception as e:
+            print(f"⚠️  Impossible de cliquer 'Vainqueur' : {e}")
+
+        # 3. Attend que la liste outright soit peuplée :
+        #    >= 20 cotes au format X,YY dans le texte de la page.
         try:
             page.wait_for_function(
-                "() => /Espagne|France|Brésil/.test(document.body.innerText) "
-                "&& /\\d+[.,]\\d{2}/.test(document.body.innerText)",
-                timeout=30_000,
+                "() => (document.body.innerText.match(/\\d+,\\d{2}/g) || []).length >= 20",
+                timeout=20_000,
             )
+            print("✅ Liste des cotes chargée")
         except Exception as e:
-            print(f"⚠️  Timeout d'attente du contenu : {e}")
+            print(f"⚠️  Timeout d'attente des cotes : {e}")
 
-        # Petit délai supplémentaire pour les rendus JS tardifs.
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(1500)  # rendu final
 
         text = page.evaluate("() => document.body.innerText")
 
@@ -97,18 +110,40 @@ def fetch_page_text() -> str:
         return text
 
 
+def scope_to_outright(text: str) -> str:
+    """
+    Restreint au bloc qui suit le sous-onglet 'Vainqueur (N)'.
+    Coupe avant les sous-onglets suivants (Buteurs, Top X, Stats).
+    """
+    m = re.search(r"Vainqueur\s*\(\d+\)", text)
+    if not m:
+        return text
+    rest = text[m.start():]
+    end = re.search(
+        r"\n\s*(Buteurs\s*\(\d+\)|Top\s*X\s*\(\d+\)|Stats\s+joueurs|Stats\s+équipes)",
+        rest,
+    )
+    return rest[: end.start()] if end else rest
+
+
 def extract_odd(text: str, country: str) -> float | None:
-    """Cherche la cote associée au pays dans le texte."""
+    """
+    Cherche la cote outright pour `country`. Les cotes Winamax outright sont
+    TOUJOURS affichées avec exactement 2 décimales (ex : 4,75 — 120,00 —
+    5000,00). On exige ce format pour exclure les pourcentages (34%) et les
+    IDs internes (5630, 2287, etc.) qui apparaissent comme entiers nus.
+    """
     names = ALIASES.get(country, [country])
-    # Une cote est un nombre décimal entre 1.01 et 99999 avec . ou ,
-    odds_re = r"(\d{1,5}(?:[.,]\d{1,2})?)"
+    odds_re = r"(\d{1,5}[.,]\d{2})"
     for name in names:
-        # Le pays peut être suivi de la cote sur la même ligne ou la suivante.
+        # Entre le nom du pays et sa cote outright : drapeau, %, barre.
+        # Fenêtre de 200 caractères pour rester local.
         pattern = re.compile(
-            r"\b" + re.escape(name) + r"\b\s*\n?\s*" + odds_re,
+            r"\b" + re.escape(name) + r"\b[\s\S]{0,200}?" + odds_re,
             re.IGNORECASE,
         )
-        for m in pattern.finditer(text):
+        m = pattern.search(text)
+        if m:
             value = float(m.group(1).replace(",", "."))
             if 1.01 <= value <= 99999:
                 return value
@@ -146,49 +181,24 @@ def update_csv(odds: dict[str, float], today: str) -> tuple[int, int]:
     return filled, len(body)
 
 
-def scope_to_outright(text: str) -> str:
-    """
-    Restreint au bloc "Vainqueur" (paris outright). Le haut de la page liste
-    des cotes de matchs en cours (ex. Canada @1.02) qui n'ont rien à voir avec
-    la cote de vainqueur du tournoi.
-    """
-    matches = list(re.finditer(r"\bVainqueur\b", text))
-    if not matches:
-        return text  # fallback: pas de section trouvée
-
-    # Le mot "Vainqueur" apparaît plusieurs fois (tabs, heading). On garde la
-    # dernière occurrence — c'est généralement le heading de section.
-    start = matches[-1].start()
-    rest = text[start:]
-
-    # Coupe avant la section suivante si on la trouve.
-    end = re.search(
-        r"\n\s*(Buteurs|Top X|Stats joueurs|Phase de groupes|"
-        r"Qualifié|Demi-finale|Finaliste)\b",
-        rest,
-    )
-    return rest[: end.start()] if end else rest
-
-
 def main() -> int:
     countries = load_countries()
     print(f"📋 {len(countries)} pays à récupérer")
 
     text = fetch_page_text()
-    outright_text = scope_to_outright(text)
+    outright = scope_to_outright(text)
     print(
         f"📄 {len(text)} chars total → "
-        f"{len(outright_text)} chars dans la section Vainqueur"
+        f"{len(outright)} chars dans la section Vainqueur"
     )
 
-    # Sauve la section scopée pour debug
     DEBUG_DIR.mkdir(exist_ok=True)
-    (DEBUG_DIR / "outright.txt").write_text(outright_text, encoding="utf-8")
+    (DEBUG_DIR / "outright.txt").write_text(outright, encoding="utf-8")
 
     odds = {}
     missing = []
     for c in countries:
-        v = extract_odd(outright_text, c)
+        v = extract_odd(outright, c)
         if v is None:
             missing.append(c)
         else:
@@ -200,7 +210,7 @@ def main() -> int:
         print(f"⚠️  Manquants : {', '.join(missing)}")
 
     if coverage < 0.9:
-        print("❌ Couverture < 90%, abandon (CSV non modifié).")
+        print("❌ Couverture < 90 %, abandon (CSV non modifié).")
         print(f"   Artefacts debug dans {DEBUG_DIR}/")
         return 1
 
@@ -212,3 +222,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+    
