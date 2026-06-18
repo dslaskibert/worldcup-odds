@@ -17,11 +17,11 @@ CSV_PATH = Path("data/odds.csv")
 OUT_PATH = Path("docs/index.html")
 PARIS = ZoneInfo("Europe/Paris")
 
-# Bornes fixes de l'échelle log. Cotes <= 4 = vert pur, >= 2000 = rouge pur.
+# Bornes fixes de l'échelle log. Cotes <= 1 = vert pur, >= 500 = rouge pur.
 # Tout pays encore en course tombe dans cette plage ; les pays éliminés (cotes
 # qui explosent à 5000+) clip simplement sur la borne rouge.
-LOG_MIN = math.log10(4)
-LOG_MAX = math.log10(2000)
+LOG_MIN = math.log10(1)
+LOG_MAX = math.log10(500)
 
 
 def color_for(odd: float | None) -> str:
