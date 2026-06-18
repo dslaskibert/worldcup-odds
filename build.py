@@ -17,10 +17,10 @@ CSV_PATH = Path("data/odds.csv")
 OUT_PATH = Path("docs/index.html")
 PARIS = ZoneInfo("Europe/Paris")
 
-# Bornes fixes de l'échelle log. Cotes <= 1 = vert pur, >= 500 = rouge pur.
+# Bornes fixes de l'échelle log. Cotes <= 5 = vert pur, >= 500 = rouge pur.
 # Tout pays encore en course tombe dans cette plage ; les pays éliminés (cotes
 # qui explosent à 5000+) clip simplement sur la borne rouge.
-LOG_MIN = math.log10(1)
+LOG_MIN = math.log10(5)
 LOG_MAX = math.log10(500)
 
 
