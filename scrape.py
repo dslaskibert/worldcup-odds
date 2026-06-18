@@ -116,34 +116,58 @@ def extract_odd(text: str, country: str) -> float | None:
 
 
 def update_csv(odds: dict[str, float], today: str) -> tuple[int, int]:
-    """Ajoute une colonne au CSV pour `today`. Renvoie (ajoutés, remplacés)."""
+    """Ajoute (ou écrase) la colonne `today` dans le CSV."""
     with CSV_PATH.open(encoding="utf-8") as f:
         rows = list(csv.reader(f))
     header, *body = rows
 
     if today in header:
         col = header.index(today)
-        action = "remplacés"
     else:
         header.append(today)
         col = len(header) - 1
         for r in body:
             r.append("")
-        action = "ajoutés"
+
+    # Reset la colonne du jour avant de réécrire, pour qu'un rerun parte propre.
+    for r in body:
+        r[col] = ""
 
     filled = 0
     for r in body:
-        country = r[0]
-        if country in odds:
-            r[col] = str(odds[country])
+        if r[0] in odds:
+            r[col] = str(odds[r[0]])
             filled += 1
 
     with CSV_PATH.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(header)
         w.writerows(body)
-
     return filled, len(body)
+
+
+def scope_to_outright(text: str) -> str:
+    """
+    Restreint au bloc "Vainqueur" (paris outright). Le haut de la page liste
+    des cotes de matchs en cours (ex. Canada @1.02) qui n'ont rien à voir avec
+    la cote de vainqueur du tournoi.
+    """
+    matches = list(re.finditer(r"\bVainqueur\b", text))
+    if not matches:
+        return text  # fallback: pas de section trouvée
+
+    # Le mot "Vainqueur" apparaît plusieurs fois (tabs, heading). On garde la
+    # dernière occurrence — c'est généralement le heading de section.
+    start = matches[-1].start()
+    rest = text[start:]
+
+    # Coupe avant la section suivante si on la trouve.
+    end = re.search(
+        r"\n\s*(Buteurs|Top X|Stats joueurs|Phase de groupes|"
+        r"Qualifié|Demi-finale|Finaliste)\b",
+        rest,
+    )
+    return rest[: end.start()] if end else rest
 
 
 def main() -> int:
@@ -151,12 +175,20 @@ def main() -> int:
     print(f"📋 {len(countries)} pays à récupérer")
 
     text = fetch_page_text()
-    print(f"📄 {len(text)} caractères extraits de la page")
+    outright_text = scope_to_outright(text)
+    print(
+        f"📄 {len(text)} chars total → "
+        f"{len(outright_text)} chars dans la section Vainqueur"
+    )
+
+    # Sauve la section scopée pour debug
+    DEBUG_DIR.mkdir(exist_ok=True)
+    (DEBUG_DIR / "outright.txt").write_text(outright_text, encoding="utf-8")
 
     odds = {}
     missing = []
     for c in countries:
-        v = extract_odd(text, c)
+        v = extract_odd(outright_text, c)
         if v is None:
             missing.append(c)
         else:
