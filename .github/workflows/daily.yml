@@ -1,0 +1,61 @@
+name: Daily odds update
+
+on:
+  schedule:
+    # 9h00 Paris en été (CEST = UTC+2). Cron Actions est en UTC.
+    # En hiver (CET = UTC+1) ça tournera à 8h Paris — non pertinent ici,
+    # la CDM se termine le 19/07.
+    - cron: "0 7 * * *"
+  workflow_dispatch:  # permet le déclenchement manuel depuis l'onglet Actions
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-odds
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Scrape Winamax
+        run: python scrape.py
+
+      - name: Build HTML
+        run: python build.py
+
+      - name: Upload debug artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-${{ github.run_id }}
+          path: debug/
+          retention-days: 7
+
+      - name: Commit & push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/odds.csv docs/index.html
+          if git diff --cached --quiet; then
+            echo "Rien à commiter."
+          else
+            today=$(TZ=Europe/Paris date +%Y-%m-%d)
+            git commit -m "data: cotes du $today"
+            git push
+          fi
