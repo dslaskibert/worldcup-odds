@@ -76,38 +76,49 @@ def trend_cell(values: list[float | None]) -> str:
 
 
 def sparkline(values: list[float | None]) -> str:
-    """
-    SVG normalisé par ligne : le min et le max de ce pays définissent
-    le haut et le bas du graphe → même une variation 5→7 est bien visible.
-    """
     pts = [(i, v) for i, v in enumerate(values) if v is not None]
     if len(pts) < 2:
         return f'<svg width="{SPARK_W}" height="{SPARK_H}"></svg>'
 
-    n   = len(values)
-    lv  = [math.log10(v) for _, v in pts]
+    n  = len(values)
+    lv = [math.log10(v) for _, v in pts]
     lo, hi = min(lv), max(lv)
-    span = hi - lo if hi > lo else 0.1  # évite division par zéro
+    # Plage minimum de 0.3 unités log (≈ facteur 2×) pour ne pas
+    # exagérer les micro-fluctuations type 5.5→5.6.
+    span = max(hi - lo, 0.3)
+    mid  = (lo + hi) / 2
+    lo   = mid - span / 2
+    hi   = mid + span / 2
 
     def x(i):
         return SPARK_PAD + (i / (n - 1)) * (SPARK_W - 2 * SPARK_PAD)
 
     def y(log_val):
-        # bas = haute cote (mauvais), haut = basse cote (favori)
         t = (log_val - lo) / span
         return SPARK_PAD + (1 - t) * (SPARK_H - 2 * SPARK_PAD)
 
     coords = [(x(i), y(math.log10(v))) for i, v in pts]
-    path   = "M " + " L ".join(f"{cx:.1f},{cy:.1f}" for cx, cy in coords)
 
-    # Remplissage
+    # Courbe de Bézier lissée : passage par les midpoints entre chaque paire
+    # de points, avec une courbe quadratique — aucune oscillation parasite.
+    def smooth_path(cs):
+        if len(cs) == 2:
+            return f"M{cs[0][0]:.1f},{cs[0][1]:.1f} L{cs[1][0]:.1f},{cs[1][1]:.1f}"
+        d = [f"M{cs[0][0]:.1f},{cs[0][1]:.1f}"]
+        for i in range(len(cs) - 1):
+            mx = (cs[i][0] + cs[i+1][0]) / 2
+            my = (cs[i][1] + cs[i+1][1]) / 2
+            d.append(f"Q{cs[i][0]:.1f},{cs[i][1]:.1f} {mx:.1f},{my:.1f}")
+        d.append(f"L{cs[-1][0]:.1f},{cs[-1][1]:.1f}")
+        return " ".join(d)
+
+    path = smooth_path(coords)
     fill_pts  = (coords
                  + [(coords[-1][0], SPARK_H - SPARK_PAD),
                     (coords[0][0],  SPARK_H - SPARK_PAD)])
-    fill_path = "M " + " L ".join(f"{cx:.1f},{cy:.1f}" for cx, cy in fill_pts) + " Z"
+    fill_path = smooth_path(fill_pts)
 
     stroke = color_for(pts[-1][1])
-
     return (
         f'<svg width="{SPARK_W}" height="{SPARK_H}" '
         f'viewBox="0 0 {SPARK_W} {SPARK_H}">'
