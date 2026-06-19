@@ -2,10 +2,9 @@
 Génère docs/index.html depuis data/odds.csv.
 
 - Heatmap : couleur HSL en échelle log10 (gamma 0.6) de la cote.
-- Flèche de tendance J vs J-1 dans la dernière cellule.
-- Sparkline SVG inline par ligne (courbe log de la cote sur toute la période).
-- Lignes triées par cote actuelle (favoris en haut).
-- Colonne pays + sparkline stickies, dernière colonne mise en évidence.
+- Sparkline SVG par ligne, normalisée sur le min/max propre à chaque pays
+  (la variation 4.85→7 pour la France occupe toute la hauteur).
+- Colonne Δ dédiée, collée à droite de la dernière colonne : flèche + diff %.
 """
 import csv
 import math
@@ -19,15 +18,14 @@ PARIS = ZoneInfo("Europe/Paris")
 
 LOG_MIN = math.log10(2)
 LOG_MAX = math.log10(2000)
-GAMMA = 0.6
+GAMMA   = 0.6
 
 SPARK_W = 72
-SPARK_H = 22
+SPARK_H = 24
 SPARK_PAD = 2
 
 
 def log_t(odd: float) -> float:
-    """Valeur normalisée [0,1] en log-gamma pour la heatmap et les sparklines."""
     t = (math.log10(odd) - LOG_MIN) / (LOG_MAX - LOG_MIN)
     return max(0.0, min(1.0, t)) ** GAMMA
 
@@ -49,52 +47,73 @@ def fmt_date(iso: str) -> str:
     return datetime.strptime(iso, "%Y-%m-%d").strftime("%d/%m")
 
 
-def trend_arrow(values: list[float | None]) -> str:
-    """↓ favorable (cote baisse), ↑ défavorable, → stable, vide si données insuf."""
+def trend_cell(values: list[float | None]) -> str:
+    """Retourne le HTML de la cellule Δ (flèche + pourcentage)."""
     knowns = [(i, v) for i, v in enumerate(values) if v is not None]
     if len(knowns) < 2:
-        return ""
+        return '<td class="delta"></td>'
     _, prev = knowns[-2]
     _, last = knowns[-1]
-    ratio = last / prev
-    if ratio < 0.97:
-        return '<span class="arr down" title="Cote en baisse (favori)">↓</span>'
-    if ratio > 1.03:
-        return '<span class="arr up" title="Cote en hausse">↑</span>'
-    return '<span class="arr flat" title="Stable">→</span>'
+    pct = (last - prev) / prev * 100
+    if pct < -3:
+        sym   = "↓"
+        klass = "down"
+        label = f"{pct:.0f}%"
+    elif pct > 3:
+        sym   = "↑"
+        klass = "up"
+        label = f"+{pct:.0f}%"
+    else:
+        sym   = "→"
+        klass = "flat"
+        label = "~"
+    return (
+        f'<td class="delta">'
+        f'<span class="arr {klass}">{sym}</span>'
+        f'<span class="dpct {klass}">{label}</span>'
+        f'</td>'
+    )
 
 
 def sparkline(values: list[float | None]) -> str:
-    """SVG inline représentant la courbe log de la cote dans le temps."""
+    """
+    SVG normalisé par ligne : le min et le max de ce pays définissent
+    le haut et le bas du graphe → même une variation 5→7 est bien visible.
+    """
     pts = [(i, v) for i, v in enumerate(values) if v is not None]
     if len(pts) < 2:
-        return '<svg width="{}" height="{}"></svg>'.format(SPARK_W, SPARK_H)
+        return f'<svg width="{SPARK_W}" height="{SPARK_H}"></svg>'
 
-    n = len(values)
-    # X : position proportionnelle à l'index dans la timeline complète
+    n   = len(values)
+    lv  = [math.log10(v) for _, v in pts]
+    lo, hi = min(lv), max(lv)
+    span = hi - lo if hi > lo else 0.1  # évite division par zéro
+
     def x(i):
         return SPARK_PAD + (i / (n - 1)) * (SPARK_W - 2 * SPARK_PAD)
 
-    # Y : haut = favorable (cote basse), bas = défavorable (cote haute)
-    def y(v):
-        t = log_t(v)
+    def y(log_val):
+        # bas = haute cote (mauvais), haut = basse cote (favori)
+        t = (log_val - lo) / span
         return SPARK_PAD + (1 - t) * (SPARK_H - 2 * SPARK_PAD)
 
-    coords = [(x(i), y(v)) for i, v in pts]
-    path = "M " + " L ".join(f"{cx:.1f},{cy:.1f}" for cx, cy in coords)
+    coords = [(x(i), y(math.log10(v))) for i, v in pts]
+    path   = "M " + " L ".join(f"{cx:.1f},{cy:.1f}" for cx, cy in coords)
 
-    # Couleur de la sparkline = couleur du dernier point connu
-    last_v = pts[-1][1]
-    stroke = color_for(last_v)
-
-    # Aire sous la courbe pour le remplissage
-    fill_pts = coords + [(coords[-1][0], SPARK_H - SPARK_PAD), (coords[0][0], SPARK_H - SPARK_PAD)]
+    # Remplissage
+    fill_pts  = (coords
+                 + [(coords[-1][0], SPARK_H - SPARK_PAD),
+                    (coords[0][0],  SPARK_H - SPARK_PAD)])
     fill_path = "M " + " L ".join(f"{cx:.1f},{cy:.1f}" for cx, cy in fill_pts) + " Z"
 
+    stroke = color_for(pts[-1][1])
+
     return (
-        f'<svg width="{SPARK_W}" height="{SPARK_H}" viewBox="0 0 {SPARK_W} {SPARK_H}">'
-        f'<path d="{fill_path}" fill="{stroke}" fill-opacity="0.15" stroke="none"/>'
-        f'<path d="{path}" fill="none" stroke="{stroke}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
+        f'<svg width="{SPARK_W}" height="{SPARK_H}" '
+        f'viewBox="0 0 {SPARK_W} {SPARK_H}">'
+        f'<path d="{fill_path}" fill="{stroke}" fill-opacity="0.18" stroke="none"/>'
+        f'<path d="{path}" fill="none" stroke="{stroke}" '
+        f'stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>'
         f'</svg>'
     )
 
@@ -103,7 +122,7 @@ def main() -> None:
     with CSV_PATH.open(encoding="utf-8") as f:
         reader = csv.reader(f)
         header = next(reader)
-        rows = [r for r in reader if r[0]]
+        rows   = [r for r in reader if r[0]]
 
     dates = header[1:]
 
@@ -123,25 +142,28 @@ def main() -> None:
     cells = []
     for country, values in data:
         spark = sparkline(values)
-        arrow = trend_arrow(values)
-        tds = [
-            f'<th scope="row"><span class="cname">{country}</span>'
-            f'<span class="spark">{spark}</span></th>'
+        tds   = [
+            f'<th scope="row">'
+            f'<span class="cname">{country}</span>'
+            f'<span class="spark">{spark}</span>'
+            f'</th>'
         ]
         for i, v in enumerate(values):
             is_last = i == len(values) - 1
-            klass = ' class="last"' if is_last else ""
-            bg = color_for(v)
-            inner = fmt_odd(v)
-            if is_last and arrow:
-                inner = f'{inner}<br>{arrow}'
-            tds.append(f'<td{klass} style="background:{bg}">{inner}</td>')
+            klass   = ' class="last"' if is_last else ""
+            tds.append(f'<td{klass} style="background:{color_for(v)}">{fmt_odd(v)}</td>')
+        tds.append(trend_cell(values))
         cells.append("<tr>" + "".join(tds) + "</tr>")
 
-    head_cells = ['<th scope="col" class="country-col">Pays</th>'] + [
-        f'<th scope="col"{" class=\"last\"" if i == len(dates) - 1 else ""}>{fmt_date(d)}</th>'
-        for i, d in enumerate(dates)
-    ]
+    head_cells = (
+        ['<th scope="col" class="country-col">Pays</th>']
+        + [
+            f'<th scope="col"{" class=\"last\"" if i == len(dates)-1 else ""}>'
+            f'{fmt_date(d)}</th>'
+            for i, d in enumerate(dates)
+        ]
+        + ['<th scope="col" class="delta-head">Δ J-1</th>']
+    )
 
     now = datetime.now(PARIS).strftime("%d/%m/%Y à %H:%M")
 
@@ -159,110 +181,72 @@ def main() -> None:
 <title>Cotes Winamax — Coupe du Monde 2026</title>
 <style>
   :root {{
-    --bg: #0f1216;
-    --fg: #e8eaed;
-    --muted: #8a93a0;
-    --border: #232830;
-    --accent: #4a9eff;
+    --bg: #0f1216; --fg: #e8eaed; --muted: #8a93a0;
+    --border: #232830; --accent: #4a9eff;
+    --green: #22c55e; --red: #ef4444;
   }}
   * {{ box-sizing: border-box; }}
   body {{
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: var(--bg);
-    color: var(--fg);
-    font-size: 14px;
-    line-height: 1.4;
+    background: var(--bg); color: var(--fg);
+    font-size: 14px; line-height: 1.4;
   }}
-  header {{
-    padding: 20px 16px 12px;
-    border-bottom: 1px solid var(--border);
-  }}
+  header {{ padding: 20px 16px 12px; border-bottom: 1px solid var(--border); }}
   h1 {{ margin: 0 0 4px; font-size: 18px; font-weight: 600; }}
   .meta {{ color: var(--muted); font-size: 12px; }}
   .legend {{
-    margin-top: 10px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+    margin-top: 10px; display: flex; align-items: center;
+    gap: 6px; flex-wrap: wrap;
   }}
   .legend-label {{ color: var(--muted); font-size: 11px; }}
   .chip {{
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 3px;
-    color: #111;
-    font-weight: 600;
-    font-size: 11px;
-    min-width: 28px;
-    text-align: center;
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    color: #111; font-weight: 600; font-size: 11px;
+    min-width: 28px; text-align: center;
   }}
   .scroll {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
-  table {{
-    border-collapse: separate;
-    border-spacing: 0;
-    white-space: nowrap;
-    margin: 0;
-  }}
+  table {{ border-collapse: separate; border-spacing: 0; white-space: nowrap; margin: 0; }}
   th, td {{
-    padding: 5px 10px;
-    text-align: center;
+    padding: 5px 10px; text-align: center;
     border-right: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     font-variant-numeric: tabular-nums;
   }}
   thead th {{
-    background: var(--bg);
-    font-weight: 500;
-    color: var(--muted);
-    font-size: 11px;
-    position: sticky;
-    top: 0;
-    z-index: 2;
+    background: var(--bg); font-weight: 500; color: var(--muted);
+    font-size: 11px; position: sticky; top: 0; z-index: 2;
   }}
   tbody th {{
-    background: var(--bg);
-    text-align: left;
-    font-weight: 500;
-    position: sticky;
-    left: 0;
-    z-index: 1;
-    min-width: 200px;
-    border-right: 2px solid var(--border);
+    background: var(--bg); text-align: left; font-weight: 500;
+    position: sticky; left: 0; z-index: 1;
+    min-width: 200px; border-right: 2px solid var(--border);
     vertical-align: middle;
   }}
-  .cname {{
-    display: block;
-    font-size: 13px;
-    line-height: 1.2;
-  }}
-  .spark {{
-    display: block;
-    margin-top: 2px;
-    opacity: 0.9;
-  }}
+  .cname {{ display: block; font-size: 13px; line-height: 1.2; }}
+  .spark  {{ display: block; margin-top: 3px; }}
   thead .country-col {{ z-index: 3; left: 0; text-align: left; }}
-  td {{
-    color: #111;
-    font-weight: 600;
-    min-width: 54px;
-    font-size: 13px;
-    line-height: 1.1;
-  }}
+  td {{ color: #111; font-weight: 600; min-width: 54px; font-size: 13px; }}
   .last {{ box-shadow: inset 2px 0 0 var(--accent); }}
-  /* Flèches de tendance */
-  .arr {{ display: block; font-size: 11px; font-weight: 700; line-height: 1; }}
-  .arr.down {{ color: #22c55e; }}   /* vert = favori, cote baisse */
-  .arr.up   {{ color: #ef4444; }}   /* rouge = cote monte */
-  .arr.flat {{ color: var(--muted); }}
+
+  /* Colonne Δ */
+  td.delta, th.delta-head {{
+    min-width: 58px; background: var(--bg);
+    border-left: 2px solid var(--border);
+    position: sticky; right: 0;
+  }}
+  td.delta {{ display: flex; flex-direction: column; align-items: center;
+              justify-content: center; gap: 1px; padding: 4px 6px; }}
+  .arr      {{ font-size: 16px; font-weight: 800; line-height: 1; }}
+  .dpct     {{ font-size: 10px; font-weight: 600; line-height: 1; }}
+  .down     {{ color: var(--green); }}
+  .up       {{ color: var(--red);   }}
+  .flat     {{ color: var(--muted); }}
+  th.delta-head {{ color: var(--muted); font-size: 11px; }}
+
   tbody tr:hover th,
   tbody tr:hover td {{ filter: brightness(1.12); }}
-  footer {{
-    padding: 12px 16px 24px;
-    color: var(--muted);
-    font-size: 11px;
-  }}
+  footer {{ padding: 12px 16px 24px; color: var(--muted); font-size: 11px; }}
   footer a {{ color: var(--accent); }}
 </style>
 </head>
@@ -271,11 +255,13 @@ def main() -> None:
   <h1>Cotes Winamax — Vainqueur Coupe du Monde 2026</h1>
   <div class="meta">Mis à jour le {now} (heure de Paris)</div>
   <div class="legend">
-    <span class="legend-label">Échelle (log) :</span>
+    <span class="legend-label">Échelle :</span>
     {legend_html}
-    <span class="legend-label" style="margin-left:12px">Tendance J-1 :</span>
-    <span class="arr down" style="font-size:13px">↓</span><span style="font-size:11px;color:var(--muted)">favori</span>
-    <span class="arr up" style="font-size:13px;margin-left:8px">↑</span><span style="font-size:11px;color:var(--muted)">outsider</span>
+    <span class="legend-label" style="margin-left:10px">Δ J-1 :</span>
+    <span class="arr down" style="font-size:13px">↓</span>
+    <span style="font-size:11px;color:var(--muted)">favori</span>
+    <span class="arr up"   style="font-size:13px;margin-left:6px">↑</span>
+    <span style="font-size:11px;color:var(--muted)">outsider</span>
   </div>
 </header>
 <div class="scroll">
