@@ -28,7 +28,7 @@ def color_for(odd: float | None) -> str:
     if odd is None:
         return "transparent"
     t = (math.log10(odd) - LOG_MIN) / (LOG_MAX - LOG_MIN)
-    t = max(0.0, min(1.0, t))
+    t = max(0.0, min(1.0, t)) ** 0.6
     hue = 120 * (1 - t)  # 120 = vert, 0 = rouge, passe par 60 = jaune
     return f"hsl({hue:.0f} 82% 62%)"
 
