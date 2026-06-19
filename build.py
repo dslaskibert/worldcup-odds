@@ -22,7 +22,7 @@ GAMMA   = 0.6
 
 SPARK_W = 72
 SPARK_H = 24
-SPARK_PAD = 2
+SPARK_PAD = 4
 
 
 def log_t(odd: float) -> float:
