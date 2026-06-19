@@ -165,6 +165,7 @@ def extract_odd(text: str, country: str) -> float | None:
         pattern = re.compile(
             r"\b" + re.escape(name) + r"\b\s*\n"
             r"\s*\d+\s*%\s*\n"
+            r"(?:\s*\d{1,4}\s*\n)?"   # badge parieurs optionnel (ex: "31\n")
             r"\s*" + cote_re,
             re.IGNORECASE,
         )
