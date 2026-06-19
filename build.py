@@ -16,13 +16,13 @@ CSV_PATH = Path("data/odds.csv")
 OUT_PATH = Path("docs/index.html")
 PARIS = ZoneInfo("Europe/Paris")
 
-LOG_MIN = math.log10(2)
+LOG_MIN = math.log10(4)
 LOG_MAX = math.log10(2000)
 GAMMA   = 0.6
 
 SPARK_W = 72
 SPARK_H = 24
-SPARK_PAD = 4
+SPARK_PAD = 2
 
 
 def log_t(odd: float) -> float:
