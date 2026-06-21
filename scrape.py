@@ -79,15 +79,39 @@ def fetch_page_text() -> str:
 
         page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
         page.wait_for_timeout(3000)
-        
-        # Ferme le bandeau cookies (tarteaucitron) qui intercepte les clics
-        # sur les onglets en dessous.
+
+        # Ferme le bandeau cookies (tarteaucitron) en cliquant directement en
+        # JS sur le bouton, sans passer par les vérifications de visibilité
+        # de Playwright (le bandeau est souvent encore en animation d'entrée
+        # au moment où Playwright essaie de cliquer, ce qui le fait échouer
+        # à tort).
         try:
-            page.get_by_text("Tout accepter", exact=True).first.click(timeout=8_000)
-            print("✅ Bandeau cookies fermé")
-            page.wait_for_timeout(1000)
+            clicked = page.evaluate(
+                """() => {
+                    const btn = document.getElementById('tarteaucitronAllAllowed');
+                    if (btn) { btn.click(); return true; }
+                    return false;
+                }"""
+            )
+            print(f"✅ Bandeau cookies cliqué via JS : {clicked}")
         except Exception as e:
-            print(f"⚠️  Bandeau cookies : {e}")
+            print(f"⚠️  Click JS bandeau : {e}")
+
+        # Filet de sécurité : supprime complètement le bandeau du DOM pour
+        # qu'il ne puisse plus jamais intercepter de clics, peu importe son
+        # état d'affichage.
+        try:
+            page.evaluate(
+                """() => {
+                    const el = document.getElementById('tarteaucitronRoot');
+                    if (el) el.remove();
+                }"""
+            )
+            print("✅ Bandeau cookies supprimé du DOM")
+        except Exception as e:
+            print(f"⚠️  Suppression DOM bandeau : {e}")
+
+        page.wait_for_timeout(500)
 
         # 1. Onglet "Compétition"
         try:
