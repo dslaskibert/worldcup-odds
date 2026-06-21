@@ -148,7 +148,15 @@ def main() -> None:
                 return v
         return float("inf")
 
-    data.sort(key=lambda x: last_known(x[1]))
+    def sort_key(item):
+        _, values = item
+        has_today = values[-1] is not None
+        # Groupe 0 = encore coté aujourd'hui (trié par cote croissante).
+        # Groupe 1 = plus coté du tout (éliminé / retiré), en bas, trié par
+        # dernière cote connue pour garder un ordre cohérent entre eux.
+        return (0 if has_today else 1, last_known(values))
+
+    data.sort(key=sort_key)
 
     cells = []
     for country, values in data:
