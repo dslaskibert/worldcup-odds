@@ -175,48 +175,57 @@ def fetch_page_text() -> str:
             print(f"⚠️  Vainqueur : {e}")
         page.wait_for_timeout(2500)
 
-        # Click "Plus de sélections" puis attend la stabilité du DOM
-        # (le count peut monter ou descendre, on attend juste que ça arrête
-        # de bouger pendant 1s).
+        # Click "Plus de sélections" : on utilise le clic natif Playwright
+        # (séquence pointerdown/pointerup/click complète via CDP), car un
+        # simple element.click() en JS ne déclenche que l'event "click" et
+        # ce bouton semble nécessiter la séquence pointer complète.
         try:
-            clicked = page.evaluate(
-                """() => {
-                    const nodes = document.querySelectorAll('span, div, button, a');
-                    for (const n of nodes) {
-                        if (n.textContent.trim() === 'Plus de sélections') {
-                            n.click();  // clic direct, pas de closest()
-                            return true;
-                        }
-                    }
-                    return false;
-                }"""
+            page.get_by_text("Plus de sélections").first.click(
+                timeout=8_000, force=True
             )
-            print(f"✅ 'Plus de sélections' cliqué via JS : {clicked}")
+            print("✅ 'Plus de sélections' cliqué (Playwright natif)")
         except Exception as e:
-            print(f"⚠️  'Plus de sélections' : {e}")
-        page.wait_for_timeout(1000)
-
-        # Vérification : si la section Vainqueur ne s'est pas vraiment
-        # étendue (toujours 2 pays seulement), on retente une fois avec un
-        # second clic -- certains événements React ratent le premier essai
-        # si le DOM était encore en train de se stabiliser.
-        count_pct = page.evaluate(
-            "() => (document.body.innerText.match(/%/g) || []).length"
-        )
-        if count_pct < 15:
-            print(f"⚠️  Seulement {count_pct} '%' trouvés, second essai de clic")
+            print(f"⚠️  Clic natif échoué, fallback JS pointer events : {e}")
+            # Fallback : dispatch manuel de la séquence pointer complète,
+            # plus robuste qu'un simple .click() pour les composants React
+            # qui écoutent pointerdown/pointerup.
             page.evaluate(
                 """() => {
                     const nodes = document.querySelectorAll('span, div, button, a');
                     for (const n of nodes) {
                         if (n.textContent.trim() === 'Plus de sélections') {
-                            n.click();
+                            const rect = n.getBoundingClientRect();
+                            const x = rect.left + rect.width / 2;
+                            const y = rect.top + rect.height / 2;
+                            const opts = {bubbles: true, cancelable: true,
+                                          clientX: x, clientY: y};
+                            n.dispatchEvent(new PointerEvent('pointerdown', opts));
+                            n.dispatchEvent(new MouseEvent('mousedown', opts));
+                            n.dispatchEvent(new PointerEvent('pointerup', opts));
+                            n.dispatchEvent(new MouseEvent('mouseup', opts));
+                            n.dispatchEvent(new MouseEvent('click', opts));
                             return true;
                         }
                     }
                     return false;
                 }"""
             )
+
+        page.wait_for_timeout(1000)
+
+        # Vérification : si la section Vainqueur ne s'est pas vraiment
+        # étendue, on retente une fois.
+        count_pct = page.evaluate(
+            "() => (document.body.innerText.match(/%/g) || []).length"
+        )
+        if count_pct < 15:
+            print(f"⚠️  Seulement {count_pct} '%' trouvés, second essai")
+            try:
+                page.get_by_text("Plus de sélections").first.click(
+                    timeout=8_000, force=True
+                )
+            except Exception as e:
+                print(f"⚠️  Second essai échoué : {e}")
             page.wait_for_timeout(1500)
 
         last_len = -1
