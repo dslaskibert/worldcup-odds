@@ -79,7 +79,17 @@ def fetch_page_text() -> str:
 
         page.goto(URL, wait_until="domcontentloaded", timeout=30_000)
         page.wait_for_timeout(3000)
+        
+        # Ferme le bandeau cookies (tarteaucitron) qui intercepte les clics
+        # sur les onglets en dessous.
+        try:
+            page.get_by_text("Tout accepter", exact=True).first.click(timeout=8_000)
+            print("✅ Bandeau cookies fermé")
+            page.wait_for_timeout(1000)
+        except Exception as e:
+            print(f"⚠️  Bandeau cookies : {e}")
 
+        # 1. Onglet "Compétition"
         try:
             page.get_by_text("Compétition", exact=True).first.click(timeout=10_000)
             print("✅ Onglet 'Compétition' cliqué")
