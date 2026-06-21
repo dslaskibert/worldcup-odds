@@ -115,27 +115,59 @@ def fetch_page_text() -> str:
 
         # 1. Onglet "Compétition"
         try:
-            page.get_by_text("Compétition", exact=True).first.click(timeout=10_000)
-            print("✅ Onglet 'Compétition' cliqué")
+            clicked = page.evaluate(
+                """() => {
+                    const nodes = document.querySelectorAll('span, div, button, a');
+                    for (const n of nodes) {
+                        if (n.textContent.trim() === 'Compétition') {
+                            (n.closest('button, a, [role="tab"], div') || n).click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }"""
+            )
+            print(f"✅ Onglet 'Compétition' cliqué via JS : {clicked}")
         except Exception as e:
             print(f"⚠️  Compétition : {e}")
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(2000)
 
         try:
-            page.get_by_text(
-                re.compile(r"^Vainqueur\s*\(\d+\)")
-            ).first.click(timeout=10_000)
-            print("✅ Sous-onglet 'Vainqueur' cliqué")
+            clicked = page.evaluate(
+                """() => {
+                    const nodes = document.querySelectorAll('span, div, button, a');
+                    for (const n of nodes) {
+                        if (/^Vainqueur\\s*$/.test(n.textContent.trim())
+                            || /^Vainqueur\\s*\\(\\d+\\)/.test(n.textContent.trim())) {
+                            (n.closest('button, a, [role="tab"], div') || n).click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }"""
+            )
+            print(f"✅ Sous-onglet 'Vainqueur' cliqué via JS : {clicked}")
         except Exception as e:
             print(f"⚠️  Vainqueur : {e}")
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(2500)
 
         # Click "Plus de sélections" puis attend la stabilité du DOM
         # (le count peut monter ou descendre, on attend juste que ça arrête
         # de bouger pendant 1s).
         try:
-            page.get_by_text("Plus de sélections").first.click(timeout=10_000)
-            print("✅ 'Plus de sélections' cliqué")
+            clicked = page.evaluate(
+                """() => {
+                    const nodes = document.querySelectorAll('span, div, button, a');
+                    for (const n of nodes) {
+                        if (n.textContent.trim() === 'Plus de sélections') {
+                            (n.closest('button, a, div') || n).click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }"""
+            )
+            print(f"✅ 'Plus de sélections' cliqué via JS : {clicked}")
         except Exception as e:
             print(f"⚠️  'Plus de sélections' : {e}")
 
