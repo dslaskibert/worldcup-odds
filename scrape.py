@@ -184,7 +184,7 @@ def fetch_page_text() -> str:
                     const nodes = document.querySelectorAll('span, div, button, a');
                     for (const n of nodes) {
                         if (n.textContent.trim() === 'Plus de sélections') {
-                            (n.closest('button, a, div') || n).click();
+                            n.click();  // clic direct, pas de closest()
                             return true;
                         }
                     }
@@ -194,6 +194,30 @@ def fetch_page_text() -> str:
             print(f"✅ 'Plus de sélections' cliqué via JS : {clicked}")
         except Exception as e:
             print(f"⚠️  'Plus de sélections' : {e}")
+        page.wait_for_timeout(1000)
+
+        # Vérification : si la section Vainqueur ne s'est pas vraiment
+        # étendue (toujours 2 pays seulement), on retente une fois avec un
+        # second clic -- certains événements React ratent le premier essai
+        # si le DOM était encore en train de se stabiliser.
+        count_pct = page.evaluate(
+            "() => (document.body.innerText.match(/%/g) || []).length"
+        )
+        if count_pct < 15:
+            print(f"⚠️  Seulement {count_pct} '%' trouvés, second essai de clic")
+            page.evaluate(
+                """() => {
+                    const nodes = document.querySelectorAll('span, div, button, a');
+                    for (const n of nodes) {
+                        if (n.textContent.trim() === 'Plus de sélections') {
+                            n.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }"""
+            )
+            page.wait_for_timeout(1500)
 
         last_len = -1
         stable = 0
