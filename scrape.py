@@ -117,11 +117,22 @@ def fetch_page_text() -> str:
         try:
             clicked = page.evaluate(
                 """() => {
-                    const nodes = document.querySelectorAll('span, div, button, a');
-                    for (const n of nodes) {
-                        if (n.textContent.trim() === 'Compétition') {
-                            (n.closest('button, a, [role="tab"], div') || n).click();
-                            return true;
+                    // Cherche un conteneur compact qui contient à la fois
+                    // "Matchs" et "Compétition" -- c'est la barre d'onglets
+                    // de la Coupe du Monde, pas un autre menu Winamax qui
+                    // contient le mot "Compétition" tout seul.
+                    const all = document.querySelectorAll('div, ul, nav');
+                    for (const container of all) {
+                        const txt = container.textContent || '';
+                        if (txt.length > 0 && txt.length < 400
+                            && txt.includes('Matchs')
+                            && txt.includes('Compétition')) {
+                            const target = [...container.querySelectorAll('*')]
+                                .find(el => el.textContent.trim() === 'Compétition');
+                            if (target) {
+                                (target.closest('button, a, [role="tab"]') || target).click();
+                                return true;
+                            }
                         }
                     }
                     return false;
@@ -130,17 +141,30 @@ def fetch_page_text() -> str:
             print(f"✅ Onglet 'Compétition' cliqué via JS : {clicked}")
         except Exception as e:
             print(f"⚠️  Compétition : {e}")
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(2500)
 
         try:
             clicked = page.evaluate(
                 """() => {
-                    const nodes = document.querySelectorAll('span, div, button, a');
-                    for (const n of nodes) {
-                        if (/^Vainqueur\\s*$/.test(n.textContent.trim())
-                            || /^Vainqueur\\s*\\(\\d+\\)/.test(n.textContent.trim())) {
-                            (n.closest('button, a, [role="tab"], div') || n).click();
-                            return true;
+                    // Cherche la barre de sous-onglets qui contient Vainqueur
+                    // ET Buteurs côte à côte -- pas le heading de section
+                    // "Vainqueur" plus bas dans la page.
+                    const all = document.querySelectorAll('div, ul, nav');
+                    for (const container of all) {
+                        const txt = container.textContent || '';
+                        if (txt.length > 0 && txt.length < 600
+                            && txt.includes('Vainqueur')
+                            && txt.includes('Buteurs')) {
+                            const target = [...container.querySelectorAll('*')]
+                                .find(el => {
+                                    const t = el.textContent.trim();
+                                    return t === 'Vainqueur'
+                                        || /^Vainqueur\\s*\\(\\d+\\)$/.test(t);
+                                });
+                            if (target) {
+                                (target.closest('button, a, [role="tab"]') || target).click();
+                                return true;
+                            }
                         }
                     }
                     return false;
