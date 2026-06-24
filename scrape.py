@@ -175,20 +175,18 @@ def fetch_page_text() -> str:
             print(f"⚠️  Vainqueur : {e}")
         page.wait_for_timeout(2500)
 
-        # Click "Plus de sélections" : on utilise le clic natif Playwright
-        # (séquence pointerdown/pointerup/click complète via CDP), car un
-        # simple element.click() en JS ne déclenche que l'event "click" et
-        # ce bouton semble nécessiter la séquence pointer complète.
+        # Click "Plus de sélections" de la section Vainqueur outright.
+        # On cible précisément le bouton qui suit le heading "Vainqueur"
+        # (pas les autres "Plus de sélections" de la page : Double chance, etc.)
+        # force=True retiré : on laisse Playwright vérifier que l'élément
+        # est stable et visible avant de cliquer.
         try:
-            page.get_by_text("Plus de sélections").first.click(
-                timeout=8_000, force=True
-            )
+            btn = page.get_by_text("Plus de sélections").first
+            btn.scroll_into_view_if_needed(timeout=5_000)
+            btn.click(timeout=8_000)
             print("✅ 'Plus de sélections' cliqué (Playwright natif)")
         except Exception as e:
             print(f"⚠️  Clic natif échoué, fallback JS pointer events : {e}")
-            # Fallback : dispatch manuel de la séquence pointer complète,
-            # plus robuste qu'un simple .click() pour les composants React
-            # qui écoutent pointerdown/pointerup.
             page.evaluate(
                 """() => {
                     const nodes = document.querySelectorAll('span, div, button, a');
@@ -198,7 +196,7 @@ def fetch_page_text() -> str:
                             const x = rect.left + rect.width / 2;
                             const y = rect.top + rect.height / 2;
                             const opts = {bubbles: true, cancelable: true,
-                                          clientX: x, clientY: y};
+                                        clientX: x, clientY: y};
                             n.dispatchEvent(new PointerEvent('pointerdown', opts));
                             n.dispatchEvent(new MouseEvent('mousedown', opts));
                             n.dispatchEvent(new PointerEvent('pointerup', opts));
@@ -211,9 +209,8 @@ def fetch_page_text() -> str:
                 }"""
             )
 
-        # Attend que "Moins de sélections" apparaisse dans le DOM -- signal
-        # fiable que la liste outright est entièrement rendue, sans dépendre
-        # d'un pays spécifique (qui pourrait être éliminé).
+        # Attend que "Moins de sélections" apparaisse — signal fiable que
+        # la liste outright est entièrement rendue.
         try:
             page.wait_for_function(
                 "() => document.body.innerText.includes('Moins de sélections')",
