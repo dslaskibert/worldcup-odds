@@ -211,22 +211,17 @@ def fetch_page_text() -> str:
                 }"""
             )
 
-        page.wait_for_timeout(1000)
-
-        # Vérification : si la section Vainqueur ne s'est pas vraiment
-        # étendue, on retente une fois.
-        count_pct = page.evaluate(
-            "() => (document.body.innerText.match(/%/g) || []).length"
-        )
-        if count_pct < 15:
-            print(f"⚠️  Seulement {count_pct} '%' trouvés, second essai")
-            try:
-                page.get_by_text("Plus de sélections").first.click(
-                    timeout=8_000, force=True
-                )
-            except Exception as e:
-                print(f"⚠️  Second essai échoué : {e}")
-            page.wait_for_timeout(1500)
+        # Attend que "Moins de sélections" apparaisse dans le DOM -- signal
+        # fiable que la liste outright est entièrement rendue, sans dépendre
+        # d'un pays spécifique (qui pourrait être éliminé).
+        try:
+            page.wait_for_function(
+                "() => document.body.innerText.includes('Moins de sélections')",
+                timeout=12_000,
+            )
+            print("✅ Liste étendue ('Moins de sélections' détecté)")
+        except Exception as e:
+            print(f"⚠️  Timeout attente expansion : {e}")
 
         last_len = -1
         stable = 0
