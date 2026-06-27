@@ -150,11 +150,15 @@ def main() -> None:
 
     def sort_key(item):
         _, values = item
+        # Trouve l'index de la dernière cote connue
+        last_idx = max((i for i, v in enumerate(values) if v is not None), default=-1)
         has_today = values[-1] is not None
-        # Groupe 0 = encore coté aujourd'hui (trié par cote croissante).
-        # Groupe 1 = plus coté du tout (éliminé / retiré), en bas, trié par
-        # dernière cote connue pour garder un ordre cohérent entre eux.
-        return (0 if has_today else 1, last_known(values))
+        # Groupe 0 = encore coté (trié par cote croissante)
+        # Groupe 1 = éliminé (trié par date de dernière cote, les plus récents en haut)
+        if has_today:
+            return (0, last_known(values), 0)
+        else:
+            return (1, -last_idx, last_known(values))
 
     data.sort(key=sort_key)
 
