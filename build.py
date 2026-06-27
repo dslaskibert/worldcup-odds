@@ -129,6 +129,36 @@ def sparkline(values: list[float | None]) -> str:
     )
 
 
+def rank_delta_badge(country: str, data: list[tuple]) -> str:
+    """
+    Retourne un badge HTML indiquant le gain/perte de rang depuis J1.
+    ▲N = monté de N places, ▼N = descendu, = = stable.
+    """
+    # Rang J1 : trié par cote du premier jour connu
+    def first_known(values):
+        for v in values:
+            if v is not None:
+                return v
+        return float("inf")
+
+    rank_j1 = sorted(data, key=lambda x: first_known(x[1]))
+    rank_now = data  # data est déjà trié par sort_key
+
+    idx_j1  = next((i for i, (c, _) in enumerate(rank_j1)  if c == country), None)
+    idx_now = next((i for i, (c, _) in enumerate(rank_now) if c == country), None)
+
+    if idx_j1 is None or idx_now is None:
+        return ""
+
+    delta = idx_j1 - idx_now  # positif = a monté (meilleur rang)
+    if delta > 0:
+        return f'<span class="rdelta up">▲{delta}</span>'
+    elif delta < 0:
+        return f'<span class="rdelta down">▼{abs(delta)}</span>'
+    else:
+        return '<span class="rdelta flat">=</span>'
+
+
 def main() -> None:
     with CSV_PATH.open(encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -165,9 +195,10 @@ def main() -> None:
     cells = []
     for country, values in data:
         spark = sparkline(values)
+        badge = rank_delta_badge(country, data)
         tds   = [
             f'<th scope="row">'
-            f'<span class="cname">{country}</span>'
+            f'<span class="cname">{country}{badge}</span>'
             f'<span class="spark">{spark}</span>'
             f'</th>'
         ]
@@ -247,6 +278,11 @@ def main() -> None:
     vertical-align: middle;
   }}
   .cname {{ display: block; font-size: 13px; line-height: 1.2; }}
+  .rdelta {{ font-size: 10px; font-weight: 700; margin-left: 5px;
+             opacity: 0.7; vertical-align: middle; }}
+  .rdelta.up   {{ color: var(--green); }}
+  .rdelta.down {{ color: var(--red); }}
+  .rdelta.flat {{ color: var(--muted); }}
   .spark  {{ display: block; margin-top: 3px; }}
   thead .country-col {{ z-index: 3; left: 0; text-align: left; }}
   td {{ color: #111; font-weight: 600; min-width: 54px; font-size: 13px; }}
