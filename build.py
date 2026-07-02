@@ -56,10 +56,10 @@ def elimination_stage(rank_among_eliminated: int) -> str:
     """
     thresholds = [
         (16, "P"),
-        (32, "32e"),
-        (40, "16e"),
-        (44, "8e"),
-        (46, "4e"),
+        (32, "16e"),
+        (40, "8e"),
+        (44, "Quart"),
+        (46, "Demi"),
         (47, "Fin."),
     ]
     for limit, label in thresholds:
