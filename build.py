@@ -47,8 +47,36 @@ def fmt_date(iso: str) -> str:
     return datetime.strptime(iso, "%Y-%m-%d").strftime("%d/%m")
 
 
-def trend_cell(values: list[float | None]) -> str:
-    """Retourne le HTML de la cellule Δ (flèche + pourcentage)."""
+def elimination_stage(rank_among_eliminated: int) -> str:
+    """
+    rank_among_eliminated : 0 = premier éliminé (le plus ancien), en
+    remontant vers les éliminations les plus récentes.
+    Paliers (48 équipes) : 16 en poule, 16 en 32e, 8 en 16e, 4 en 8e,
+    2 en 4e, 1 finaliste.
+    """
+    thresholds = [
+        (16, "P"),
+        (32, "32e"),
+        (40, "16e"),
+        (44, "8e"),
+        (46, "4e"),
+        (47, "Fin."),
+    ]
+    for limit, label in thresholds:
+        if rank_among_eliminated < limit:
+            return label
+    return "Fin."
+
+
+def trend_cell(values: list[float | None], elim_label: str | None) -> str:
+    """
+    Si l'équipe est éliminée (elim_label fourni) : affiche le palier
+    d'élimination au lieu du delta J-1 (qui n'a plus de sens).
+    Sinon : flèche + pourcentage habituels.
+    """
+    if elim_label:
+        return f'<td class="delta"><span class="stage">{elim_label}</span></td>'
+
     knowns = [(i, v) for i, v in enumerate(values) if v is not None]
     if len(knowns) < 2:
         return '<td class="delta"></td>'
@@ -56,17 +84,11 @@ def trend_cell(values: list[float | None]) -> str:
     _, last = knowns[-1]
     pct = (last - prev) / prev * 100
     if pct < -3:
-        sym   = "↓"
-        klass = "down"
-        label = f"{pct:.0f}%"
+        sym, klass, label = "↓", "down", f"{pct:.0f}%"
     elif pct > 3:
-        sym   = "↑"
-        klass = "up"
-        label = f"+{pct:.0f}%"
+        sym, klass, label = "↑", "up", f"+{pct:.0f}%"
     else:
-        sym   = "→"
-        klass = "flat"
-        label = "~"
+        sym, klass, label = "→", "flat", "~"
     return (
         f'<td class="delta">'
         f'<span class="arr {klass}">{sym}</span>'
@@ -180,17 +202,29 @@ def main() -> None:
 
     def sort_key(item):
         _, values = item
-        # Trouve l'index de la dernière cote connue
         last_idx = max((i for i, v in enumerate(values) if v is not None), default=-1)
         has_today = values[-1] is not None
-        # Groupe 0 = encore coté (trié par cote croissante)
-        # Groupe 1 = éliminé (trié par date de dernière cote, les plus récents en haut)
         if has_today:
             return (0, last_known(values), 0)
         else:
             return (1, -last_idx, last_known(values))
 
     data.sort(key=sort_key)
+
+    # Calcule le palier d'élimination pour chaque pays éliminé.
+    # On reclasse les éliminés du plus ANCIEN au plus récent pour assigner
+    # les paliers dans l'ordre chronologique du tournoi.
+    eliminated = [
+        (country, values) for country, values in data
+        if values[-1] is None
+    ]
+    def last_idx_of(values):
+        return max((i for i, v in enumerate(values) if v is not None), default=-1)
+    eliminated_chrono = sorted(eliminated, key=lambda x: last_idx_of(x[1]))
+    elim_stage = {
+        country: elimination_stage(rank)
+        for rank, (country, _) in enumerate(eliminated_chrono)
+    }
 
     cells = []
     for country, values in data:
@@ -206,7 +240,7 @@ def main() -> None:
             is_last = i == len(values) - 1
             klass   = ' class="last"' if is_last else ""
             tds.append(f'<td{klass} style="background:{color_for(v)}">{fmt_odd(v)}</td>')
-        tds.append(trend_cell(values))
+        tds.append(trend_cell(values, elim_stage.get(country)))
         cells.append("<tr>" + "".join(tds) + "</tr>")
 
     head_cells = (
@@ -297,6 +331,8 @@ def main() -> None:
   td.delta {{ display: flex; flex-direction: column; align-items: center;
               justify-content: center; gap: 1px; padding: 4px 6px; }}
   .arr      {{ font-size: 16px; font-weight: 800; line-height: 1; }}
+  .stage {{ font-size: 11px; font-weight: 700; color: var(--muted);
+            background: var(--border); padding: 2px 6px; border-radius: 3px; }}
   .dpct     {{ font-size: 10px; font-weight: 600; line-height: 1; }}
   .down     {{ color: var(--green); }}
   .up       {{ color: var(--red);   }}
