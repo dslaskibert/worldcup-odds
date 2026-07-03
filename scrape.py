@@ -30,7 +30,7 @@ URL = "https://www.winamax.fr/paris-sportifs/sports/1/4/900001750"
 CSV_PATH = Path("data/odds.csv")
 DEBUG_DIR = Path("debug")
 PARIS = ZoneInfo("Europe/Paris")
-MIN_COUNTRIES = 20
+MIN_COUNTRIES = 8
 
 # Pour chaque pays du CSV, alias possibles affichés par Winamax.
 # Ordre = priorité de recherche.
