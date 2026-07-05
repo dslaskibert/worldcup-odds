@@ -246,9 +246,10 @@ def main() -> None:
     head_cells = (
         ['<th scope="col" class="country-col">Pays</th>']
         + [
-            f'<th scope="col"{" class=\"last\"" if i == len(dates)-1 else ""}>'
+            f'<th scope="col"{ cls }>'
             f'{fmt_date(d)}</th>'
             for i, d in enumerate(dates)
+            for cls in [' class="last"' if i == len(dates)-1 else '']
         ]
         + ['<th scope="col" class="delta-head">Δ J-1</th>']
     )
