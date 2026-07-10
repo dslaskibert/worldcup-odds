@@ -5,3 +5,5 @@ debug/
 .DS_Store
 venv/
 debug/
+cron.log
+cron-update.sh
