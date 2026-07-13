@@ -267,6 +267,7 @@ def main() -> None:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>Cotes Winamax — Coupe du Monde 2026</title>
 <style>
   :root {{
