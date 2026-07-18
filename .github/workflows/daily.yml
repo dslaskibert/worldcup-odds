@@ -1,11 +1,11 @@
 name: Daily odds update
 
 on:
-  schedule:
-    # 9h00 Paris en été (CEST = UTC+2). Cron Actions est en UTC.
-    # En hiver (CET = UTC+1) ça tournera à 8h Paris — non pertinent ici,
-    # la CDM se termine le 19/07.
-    - cron: "0 7 * * *"
+  # schedule:
+  #   # 9h00 Paris en été (CEST = UTC+2). Cron Actions est en UTC.
+  #   # En hiver (CET = UTC+1) ça tournera à 8h Paris — non pertinent ici,
+  #   # la CDM se termine le 19/07.
+  #   - cron: "0 7 * * *"
   workflow_dispatch:  # permet le déclenchement manuel depuis l'onglet Actions
 
 permissions:
